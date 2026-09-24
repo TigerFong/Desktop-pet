@@ -1,0 +1,18 @@
+﻿<?xml version='1.0' encoding='utf-8'?>
+<SettingsFile xmlns="http://schemas.microsoft.com/VisualStudio/2004/01/settings" CurrentProfile="(Default)" GeneratedClassNamespace="AI桌寵.Properties" GeneratedClassName="Settings">
+  <Profiles />
+  <Settings>
+    <Setting Name="ApiKey" Type="System.String" Scope="User">
+      <Value Profile="(Default)">8e5f167f7d78470196ebc2950589db0a.qqNIJMqGt3AqOseF</Value>
+    </Setting>
+    <Setting Name="ApiUrl" Type="System.String" Scope="Application">
+      <Value Profile="(Default)">https://open.bigmodel.cn/api/paas/v4/chat/completions</Value>
+    </Setting>
+    <Setting Name="TextModel" Type="System.String" Scope="Application">
+      <Value Profile="(Default)">glm-4.5-flash</Value>
+    </Setting>
+    <Setting Name="VisionModel" Type="System.String" Scope="Application">
+      <Value Profile="(Default)">glm-4.6v-flash</Value>
+    </Setting>
+  </Settings>
+</SettingsFile>

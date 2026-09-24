@@ -1,0 +1,110 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+	<UseWindowsForms>true</UseWindowsForms>
+	<EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Remove="Images\angry.png" />
+    <None Remove="Images\Casual\angry.png" />
+    <None Remove="Images\Casual\dislike.png" />
+    <None Remove="Images\Casual\happy.png" />
+    <None Remove="Images\Casual\normal.png" />
+    <None Remove="Images\Casual\shy.png" />
+    <None Remove="Images\Casual\surprise.png" />
+    <None Remove="Images\dislike.png" />
+    <None Remove="Images\happy.png" />
+    <None Remove="Images\normal.png" />
+    <None Remove="Images\pet.png" />
+    <None Remove="Images\pet_happy.gif" />
+    <None Remove="Images\pet_normal.gif" />
+    <None Remove="Images\pet_surprised.gif" />
+    <None Remove="Images\pet_talking.gif" />
+    <None Remove="Images\pet_thinking.gif" />
+    <None Remove="Images\shy.png" />
+    <None Remove="Images\surprise.png" />
+    <None Remove="Images\Uniform\angry.png" />
+    <None Remove="Images\Uniform\dislike.png" />
+    <None Remove="Images\Uniform\happy.png" />
+    <None Remove="Images\Uniform\normal.png" />
+    <None Remove="Images\Uniform\shy.png" />
+    <None Remove="Images\Uniform\surprise.png" />
+    <None Remove="Images\Yukata\angry.png" />
+    <None Remove="Images\Yukata\dislike.png" />
+    <None Remove="Images\Yukata\happy.png" />
+    <None Remove="Images\Yukata\normal.png" />
+    <None Remove="Images\Yukata\shy.png" />
+    <None Remove="Images\Yukata\surprise.png" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="SystemPrompt.txt">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Speech" Version="10.0.12" />
+    <PackageReference Include="WpfAnimatedGif" Version="2.0.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Images\Casual\angry.png" />
+    <Resource Include="Images\Casual\dislike.png" />
+    <Resource Include="Images\Casual\happy.png" />
+    <Resource Include="Images\Casual\normal.png" />
+    <Resource Include="Images\Casual\shy.png" />
+    <Resource Include="Images\Casual\surprise.png" />
+    <Resource Include="Images\Shendao\angry.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Resource>
+    <Resource Include="Images\Shendao\dislike.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Resource>
+    <Resource Include="Images\Shendao\happy.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Resource>
+    <Resource Include="Images\Shendao\normal.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Resource>
+    <Resource Include="Images\Shendao\shy.png" />
+    <Resource Include="Images\Shendao\surprise.png" />
+    <Resource Include="Images\Uniform\angry.png" />
+    <Resource Include="Images\Uniform\dislike.png" />
+    <Resource Include="Images\Uniform\happy.png" />
+    <Resource Include="Images\Uniform\normal.png" />
+    <Resource Include="Images\Uniform\shy.png" />
+    <Resource Include="Images\Uniform\surprise.png" />
+    <Resource Include="Images\Yukata\angry.png" />
+    <Resource Include="Images\Yukata\dislike.png" />
+    <Resource Include="Images\Yukata\happy.png" />
+    <Resource Include="Images\Yukata\normal.png" />
+    <Resource Include="Images\Yukata\shy.png" />
+    <Resource Include="Images\Yukata\surprise.png" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Update="Properties\Settings.Designer.cs">
+      <DesignTimeSharedInput>True</DesignTimeSharedInput>
+      <AutoGen>True</AutoGen>
+      <DependentUpon>Settings.settings</DependentUpon>
+    </Compile>
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="appsettings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="Properties\Settings.settings">
+      <Generator>SettingsSingleFileGenerator</Generator>
+      <LastGenOutput>Settings.Designer.cs</LastGenOutput>
+    </None>
+  </ItemGroup>
+
+</Project>
