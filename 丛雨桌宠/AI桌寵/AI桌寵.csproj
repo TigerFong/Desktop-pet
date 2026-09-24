@@ -106,6 +106,7 @@
       <Generator>SettingsSingleFileGenerator</Generator>
       <LastGenOutput>Settings.Designer.cs</LastGenOutput>
     </None>
+	  <PackageReference Include="Microsoft.Playwright" Version="1.47.0" />
   </ItemGroup>
 
 </Project>
