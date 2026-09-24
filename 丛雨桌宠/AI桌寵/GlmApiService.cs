@@ -151,47 +151,51 @@ namespace SmartDesktopPet
             }
             cleanBase64 = cleanBase64.Replace("\r", "").Replace("\n", "").Trim();
 
-            string combinedText = $"{systemPrompt}\n\n【使用者指示】: {userText}";
+            var messages = new List<object>();
 
-            var messages = new List<object>
+            if (!string.IsNullOrEmpty(systemPrompt))
             {
-                new
+                messages.Add(new { role = "system", content = systemPrompt });
+            }
+
+            // 🌸 修正：確保多模態內容的格式完全符合 GLM 視覺模型規範
+            messages.Add(new
+            {
+                role = "user",
+                content = new object[]
                 {
-                    role = "user",
-                    content = new object[]
-                    {
-                        new
-                        {
-                            type = "image_url",
-                            image_url = new
-                            {
-                                url = $"data:image/jpeg;base64,{cleanBase64}"
-                            }
-                        },
-                        new
-                        {
-                            type = "text",
-                            text = combinedText
-                        }
-                    }
+            new
+            {
+                type = "text",
+                text = string.IsNullOrEmpty(userText) ? "請幫我看看這張截圖並給予傲嬌的評論。" : userText
+            },
+            new
+            {
+                type = "image_url",
+                image_url = new
+                {
+                    url = $"data:image/jpeg;base64,{cleanBase64}"
                 }
-            };
+            }
+                }
+            });
 
             var payload = new
             {
                 model = VisionModel,
                 messages = messages,
-                max_tokens = 300
+                max_tokens = 512 // 稍微調大 token 讓模型有空間生成文字
             };
 
             string responseJson = await PostPayloadAsync(payload);
             var (responseText, _) = ParseGlmResponse(responseJson);
+
             return responseText;
         }
 
         private async Task<string> PostPayloadAsync(object payload)
         {
-            int maxRetries = 3; // 🌸 重試上限調為 3 次，避免卡太久
+            int maxRetries = 3;
             for (int retry = 0; retry < maxRetries; retry++)
             {
                 try
@@ -199,8 +203,8 @@ namespace SmartDesktopPet
                     string jsonPayload = JsonSerializer.Serialize(payload);
                     var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
 
-                    HttpResponseMessage response = await _httpClient.PostAsync(ApiUrl, content); //
-                    string responseString = await response.Content.ReadAsStringAsync(); //
+                    HttpResponseMessage response = await _httpClient.PostAsync(ApiUrl, content);
+                    string responseString = await response.Content.ReadAsStringAsync();
 
                     if ((int)response.StatusCode == 429 || responseString.Contains("1305"))
                     {
@@ -213,24 +217,27 @@ namespace SmartDesktopPet
 
                     if (!response.IsSuccessStatusCode)
                     {
-                        throw new HttpRequestException($"API 請求失敗 ({response.StatusCode}): {responseString}"); //[cite: 14]
+                        // 🌸 關鍵：把詳細的伺服器錯誤內容印到除錯視窗
+                        System.Diagnostics.Debug.WriteLine($"[API 錯誤詳細內容]: Status: {response.StatusCode}, Body: {responseString}");
+                        throw new HttpRequestException($"API 請求失敗 ({response.StatusCode}): {responseString}");
                     }
 
-                    return responseString; //[cite: 14]
+                    return responseString;
                 }
                 catch (TaskCanceledException)
                 {
-                    // 超時直接拋出，不繼續盲目重試
-                    throw new Exception("請求逾時，伺服器反應過慢。");
+                    throw new Exception("請求逾時，伺服器反應過慢…哼，才、才不是本座故意不理你的！");
                 }
-                catch (Exception)
+                catch (Exception ex)
                 {
+                    // 🌸 確保能看到真實的例外訊息
+                    System.Diagnostics.Debug.WriteLine($"[PostPayload 異常]: {ex.Message}");
                     if (retry == maxRetries - 1) throw;
                     await Task.Delay(1000);
                 }
             }
 
-            throw new Exception("伺服器繁忙，請稍後再試。"); //[cite: 14]
+            throw new Exception("伺服器繁忙，請稍後再試…真是的，別一直考驗本座的耐心！");
         }
 
         /// <summary>

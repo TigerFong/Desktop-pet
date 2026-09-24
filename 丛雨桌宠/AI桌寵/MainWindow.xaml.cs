@@ -99,35 +99,69 @@ namespace SmartDesktopPet
         {
             try
             {
-                // 🌸 使用 SystemInformation / Screen 獲取最準確的螢幕實體解析度
-                var primaryScreen = System.Windows.Forms.Screen.PrimaryScreen;
-                int screenWidth = primaryScreen.Bounds.Width;
-                int screenHeight = primaryScreen.Bounds.Height;
+                var screenWidth = (int)System.Windows.SystemParameters.PrimaryScreenWidth;
+                var screenHeight = (int)System.Windows.SystemParameters.PrimaryScreenHeight;
 
-                using (Bitmap fullBitmap = new Bitmap(screenWidth, screenHeight))
+                using (var bitmap = new System.Drawing.Bitmap(screenWidth, screenHeight))
                 {
-                    using (Graphics g = Graphics.FromImage(fullBitmap))
+                    using (var g = System.Drawing.Graphics.FromImage(bitmap))
                     {
-                        g.CopyFromScreen(0, 0, 0, 0, new System.Drawing.Size(screenWidth, screenHeight));
+                        g.CopyFromScreen(0, 0, 0, 0, bitmap.Size);
                     }
 
-                    using (MemoryStream ms = new MemoryStream())
+                    // 🌸 1. 計算縮放比例，確保長寬最大不超過 2048 像素
+                    int maxDimension = 1024;
+                    int targetWidth = screenWidth;
+                    int targetHeight = screenHeight;
+
+                    if (screenWidth > maxDimension || screenHeight > maxDimension)
                     {
-                        fullBitmap.Save(ms, System.Drawing.Imaging.ImageFormat.Jpeg);
-                        byte[] imageBytes = ms.ToArray();
+                        if (screenWidth > screenHeight)
+                        {
+                            targetWidth = maxDimension;
+                            targetHeight = (int)((double)screenHeight / screenWidth * maxDimension);
+                        }
+                        else
+                        {
+                            targetHeight = maxDimension;
+                            targetWidth = (int)((double)screenWidth / screenHeight * maxDimension);
+                        }
+                    }
 
-                        string base64 = Convert.ToBase64String(imageBytes);
-                        System.Diagnostics.Debug.WriteLine($"[截圖成功] Base64 長度: {base64.Length}");
+                    using (var resizedBitmap = new System.Drawing.Bitmap(bitmap, targetWidth, targetHeight))
+                    {
+                        using (var ms = new System.IO.MemoryStream())
+                        {
+                            // 🌸 2. 設定 JPEG 壓縮品質（例如 80），確保檔案絕對小於 5MB
+                            var encoderParams = new System.Drawing.Imaging.EncoderParameters(1);
+                            encoderParams.Param[0] = new System.Drawing.Imaging.EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 80L);
+                            var jpegCodec = GetEncoderInfo("image/jpeg");
 
-                        return base64;
+                            resizedBitmap.Save(ms, jpegCodec, encoderParams);
+                            byte[] imageBytes = ms.ToArray();
+
+                            // 檢查大小（大於 5MB 時可再降低品質）
+                            System.Diagnostics.Debug.WriteLine($"[截圖大小]: {imageBytes.Length / 1024 / 1024.0:F2} MB");
+
+                            return Convert.ToBase64String(imageBytes);
+                        }
                     }
                 }
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"[截圖失敗]: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"截圖失敗: {ex.Message}");
                 return string.Empty;
             }
+        }
+
+        private System.Drawing.Imaging.ImageCodecInfo GetEncoderInfo(string mimeType)
+        {
+            foreach (var codec in System.Drawing.Imaging.ImageCodecInfo.GetImageEncoders())
+            {
+                if (codec.MimeType == mimeType) return codec;
+            }
+            return null;
         }
 
         /// <summary>
@@ -332,50 +366,35 @@ namespace SmartDesktopPet
                     {
                         ShowBubbleMessage("（叢雨正在認真看你的螢幕…）");
 
-                        string visionPrompt = "這是使用者目前的螢幕畫面，請精準描述你看到的軟體或內容並進行吐槽。";
+                        string visionPrompt = "請仔細觀察這張桌面截圖，用傲嬌的口吻吐槽主人的畫面內容！";
 
-                        // 🌸 1. 發送圖片並取得視覺分析結果
+                        // 🌸 確保這裡只有一次宣告 string visionResponse
                         string visionResponse = await _glmService.SendImageMessageAsync(_systemPrompt, base64Image, visionPrompt);
 
-                        // 🌸 2. 清理情緒標籤並過濾格式
+                        // 🌸 印出原始回應方便偵錯
+                        System.Diagnostics.Debug.WriteLine($"[API 視覺原始回應]: {visionResponse}");
+
                         string cleanText = Regex.Replace(visionResponse, @"\[EMOTION:\w+\]", "").Trim();
                         if (string.IsNullOrWhiteSpace(cleanText))
                         {
-                            cleanText = "（叢雨盯著螢幕看了半天，什麼都沒看出…）";
+                            cleanText = "（本座剛才瞪著螢幕發呆了，畫面太精彩讓本座無言以對！）";
                         }
 
-                        // 🌸 3. 將視覺分析結果顯示在氣泡對話框中！
                         BubbleText.Text = FormatMathText(cleanText);
                         BubbleScrollViewer.ScrollToEnd();
 
-                        // 🌸 4. 更新叢雨表情與紀錄歷史
                         UpdateExpressionFromText(visionResponse);
                         _chatHistory.Add(new GlmMessage { Role = "assistant", Content = visionResponse });
-                    }
-                    else
-                    {
-                        ShowBubbleMessage("（叢雨嘗試看螢幕，但擷取畫面失敗了…）");
                     }
                 }
             }
             catch (Exception ex)
             {
-                // 🌸 針對超時與 1305 伺服器繁忙進行美化處理
-                if (ex.Message.Contains("1305") || ex.Message.Contains("TooManyRequests") || ex.Message.Contains("访问量过大"))
-                {
-                    SetPetExpression(PetExpression.Surprise);
-                    ShowBubbleMessage("（現在找叢雨的人太多了，本座的大腦稍微卡住了一下，請等幾秒再試試吧！）");
-                }
-                else if (ex.Message.Contains("逾時") || ex.Message.Contains("Timeout") || ex.Message.Contains("TaskCanceledException"))
-                {
-                    SetPetExpression(PetExpression.Surprise);
-                    ShowBubbleMessage("（叢雨剛才想得太入神發呆了…再跟本座說一次吧！）");
-                }
-                else
-                {
-                    SetPetExpression(PetExpression.Dislike);
-                    ShowBubbleMessage($"（本座出錯了：{ex.Message}）");
-                }
+                // 🌸 確保能看到真實的例外訊息
+                System.Diagnostics.Debug.WriteLine($"[PostPayload 異常]: {ex.Message}");
+
+                SetPetExpression(PetExpression.Dislike);
+                ShowBubbleMessage($"伺服器繁忙，請稍後再試…真是的，別一直考驗本座的耐心！（錯誤細節：{ex.Message}）");
             }
             finally
             {
@@ -1218,10 +1237,11 @@ namespace SmartDesktopPet
                 if (lowerText == greeting) return false;
             }
 
-            // 🌸 把 .js, .html, 程式碼副檔名或常用動作也納入意圖判斷
+            // 🌸 補上「看」、「螢幕」、「畫面」等視覺觸發關鍵字！
             string[] commandKeywords = {
-                "開", "開啟", "打開", "搜尋", "查", "找", "播放", "啟動", "點歌", "聽歌", "聽", "放", "run", "launch", ".html", ".js", ".css", ".cs"
-            };
+        "開", "開啟", "打開", "搜尋", "查", "找", "播放", "啟動", "點歌", "聽歌", "聽", "放", "run", "launch",
+        ".html", ".js", ".css", ".cs", "看", "螢幕", "畫面"
+    };
 
             foreach (var keyword in commandKeywords)
             {
