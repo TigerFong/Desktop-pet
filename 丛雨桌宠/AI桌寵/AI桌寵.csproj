@@ -51,7 +51,10 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Playwright" Version="1.63.0" />
+    <PackageReference Include="NAudio" Version="3.1.0" />
     <PackageReference Include="System.Speech" Version="10.0.12" />
+    <PackageReference Include="Whisper.net" Version="1.9.1" />
+    <PackageReference Include="Whisper.net.Runtime" Version="1.9.1" />
     <PackageReference Include="WpfAnimatedGif" Version="2.0.2" />
   </ItemGroup>
 
@@ -106,7 +109,6 @@
       <Generator>SettingsSingleFileGenerator</Generator>
       <LastGenOutput>Settings.Designer.cs</LastGenOutput>
     </None>
-	  <PackageReference Include="Microsoft.Playwright" Version="1.47.0" />
   </ItemGroup>
 
 </Project>

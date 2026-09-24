@@ -43,6 +43,8 @@ namespace SmartDesktopPet
         private int _favorability = 0;
         private readonly string _favorabilityFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "favorability.txt");
         private readonly string _lastCheckInFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "last_checkin.txt");
+        private WhisperSpeechService? _whisperService;
+        private bool _isRecording = false;
 
         // 🌸 電腦狀態監控變數
         private DispatcherTimer _systemMonitorTimer = null!;
@@ -51,6 +53,8 @@ namespace SmartDesktopPet
         private bool _isCpuWarned = false;
         private bool _isBatteryWarned = false;
         private bool _isScaleMode = false;
+        // 🌸 Playwright 瀏覽器服務（LLM 專用）
+        private readonly PlaywrightBrowserService _browserService = new();
 
         // 🌸 待辦事項變數
         private List<TodoItem> _todoList = new List<TodoItem>();
@@ -63,14 +67,27 @@ namespace SmartDesktopPet
 
             if (!DesignerProperties.GetIsInDesignMode(this))
             {
+                // 🌸 首次啟動會自動下載 Chromium（若已安裝就秒過）
+                PlaywrightBrowserService.EnsureBrowsersInstalled();
+
                 _glmService = new GlmApiService();
                 LoadFavorability();
                 CheckDailyCheckIn();
                 SetPetExpression(PetExpression.Normal);
                 InitSpeechRecognizer();
-                InitSystemMonitor();// 🌸 初始化效能監控
-                InitTodoSystem(); // 🌸 初始化待辦事項系統
+                InitSystemMonitor();
+                InitTodoSystem();
                 LoadSystemPrompt();
+                // 🌸 初始化 Whisper 語音服務（模型路徑請根據實際位置調整）
+                string modelPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ggml-small.bin");
+                if (File.Exists(modelPath))
+                {
+                    _whisperService = new WhisperSpeechService(modelPath);
+                }
+                else
+                {
+                    System.Diagnostics.Debug.WriteLine("[Whisper] 未找到模型文件，語音功能停用");
+                }
             }
         }
 
@@ -199,110 +216,146 @@ namespace SmartDesktopPet
         private List<GlmTool> GetPetTools()
         {
             return new List<GlmTool>
-            {
-                new GlmTool
-                {
-                    Type = "function",
-                    Function = new GlmFunction
-                    {
-                        Name = "open_url",
-                        Description = "【極度嚴格條件】：僅在使用者明確要求開啟特定網址（如 youtube.com, google.com）或明確發出指令如'搜尋/查/找 [關鍵字]'時呼叫！絕對禁止將軟體名稱（如 Unity, 異環, Steam）當成網址！",
-                        Parameters = new
-                        {
-                            type = "object",
-                            properties = new
-                            {
-                                url = new { type = "string", description = "完整網址或 Google 搜尋連結" }
-                            },
-                            required = new[] { "url" }
-                        }
-                    }
-                },
-                new GlmTool
-                {
-                    Type = "function",
-                    Function = new GlmFunction
-                    {
-                        Name = "play_youtube_music",
-                        Description = "【播放音樂專用】：當使用者發出指令如'幫我放歌'、'點歌'、'播放 [歌曲/歌手名稱]'、'聽 [歌名]' 時呼叫！",
-                        Parameters = new
-                        {
-                            type = "object",
-                            properties = new
-                            {
-                                song_name = new { type = "string", description = "歌曲名稱或歌手關鍵字" }
-                            },
-                            required = new[] { "song_name" }
-                        }
-                    }
-                },
-                new GlmTool
-                {
-                    Type = "function",
-                    Function = new GlmFunction
-                    {
-                        Name = "execute_system_command",
-                        Description = "【開啟電腦軟體或檔案專用】：當使用者要開啟電腦程式、遊戲、檔案（例如：打開報告.docx、開啟計算機、打開 Unity Hub、打開異環）時呼叫！",
-                        Parameters = new
-                        {
-                            type = "object",
-                            properties = new
-                            {
-                                command = new { type = "string", description = "要開啟的軟體名稱、遊戲或檔案名稱（例如：報告, unity, 異環, calc, notepad）" }
-                            },
-                            required = new[] { "command" }
-                        }
-                    }
-                },
-                new GlmTool
-                {
-                    Type = "function",
-                    Function = new GlmFunction
-                    {
-                        Name = "capture_screen_and_see",
-                        Description = "【觀看螢幕畫面專用】：當使用者發出指令如'看看我的螢幕'、'幫我看這個'、'這是在寫什麼'、'看我畫面' 時呼叫！",
-                        Parameters = new
-                        {
-                            type = "object",
-                            properties = new { }, // 不需要額外參數
-                            required = new string[] { }
-                        }
-                    }
-                }
-            };
-        }
-
-        /// <summary>
-        /// 🌸 在背景偷偷抓取 YouTube 搜尋頁面的第一個影片 ID 並組合播放網址
-        /// </summary>
-        private async Task<string> GetFirstYoutubeVideoUrlAsync(string keyword)
+    {
+        // 🌸 工具 1：用「名稱」打開網站（最常用，不知道網址也能用）
+        new GlmTool
         {
-            try
+            Type = "function",
+            Function = new GlmFunction
             {
-                using var client = new HttpClient();
-                // 模擬真實瀏覽器 User-Agent 避免被擋
-                client.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
-                client.DefaultRequestHeaders.Add("Accept-Language", "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7");
-
-                string searchUrl = $"https://www.youtube.com/results?search_query={Uri.EscapeDataString(keyword)}&sp=EgIQAQ%253D%253D";
-                string html = await client.GetStringAsync(searchUrl);
-
-                // 使用正規表達式搜尋 HTML 中的第一個影片 ID (/watch?v=xxxxxxxxxxx)
-                var match = Regex.Match(html, @"/watch\?v=([a-zA-Z0-9_-]{11})");
-                if (match.Success)
+                Name = "browser_open_site",
+                Description =
+                    "【打開網站專用】當使用者說「打開 XX 網站」、「去 XX 官網」、「進入 XX」、" +
+                    "「幫我開 XX 的網頁」時呼叫。傳入網站名稱即可，不需要完整網址。" +
+                    "例如：'打開勞校中學'、'去 YouTube'、'開 Google'、'進入巴哈姆特'。",
+                Parameters = new
                 {
-                    string videoId = match.Groups[1].Value;
-                    // 回傳帶有 autoplay=1 的影片直接播放頁面
-                    return $"https://www.youtube.com/watch?v={videoId}&autoplay=1";
+                    type = "object",
+                    properties = new
+                    {
+                        site_name = new { type = "string", description = "網站名稱，例如「勞校中學」「YouTube」「巴哈姆特」" }
+                    },
+                    required = new[] { "site_name" }
                 }
             }
-            catch (Exception ex)
+        },
+        // 🌸 工具 2：已知完整網址時直接打開（少用）
+        new GlmTool
+        {
+            Type = "function",
+            Function = new GlmFunction
             {
-                System.Diagnostics.Debug.WriteLine($"[抓取 YouTube 第一首失敗]: {ex.Message}");
+                Name = "browser_open_url",
+                Description = "【開啟完整網址專用】僅當使用者直接說出完整網址（含 .com、.org、http 等）時呼叫。",
+                Parameters = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        url = new { type = "string", description = "完整網址，例如 https://www.google.com" }
+                    },
+                    required = new[] { "url" }
+                }
             }
-
-            // 若抓取失敗則自動降級為標準搜尋結果網址
-            return $"https://www.youtube.com/results?search_query={Uri.EscapeDataString(keyword)}";
+        },
+        // 🌸 工具 3：搜尋引擎（收緊觸發條件）
+        new GlmTool
+        {
+            Type = "function",
+            Function = new GlmFunction
+            {
+                Name = "browser_search",
+                Description =
+                    "【搜尋引擎專用】僅當使用者明確說「搜尋」、「查」、「找資料」、「Google 一下」時才呼叫。" +
+                    "⚠️ 若使用者說的是「打開 XX 網站」、「去 XX」，請改用 browser_open_site，不要用這個工具！",
+                Parameters = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        query = new { type = "string", description = "搜尋關鍵字" },
+                        engine = new { type = "string", description = "google / bing / youtube，預設 google" }
+                    },
+                    required = new[] { "query" }
+                }
+            }
+        },
+        // 🌸 工具 4：YouTube 點歌
+        new GlmTool
+        {
+            Type = "function",
+            Function = new GlmFunction
+            {
+                Name = "browser_play_youtube",
+                Description = "【播放音樂專用】當使用者說「幫我放歌」、「點歌」、「播放 [歌曲/歌手]」、「聽 [歌名]」時呼叫。",
+                Parameters = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        song_name = new { type = "string", description = "歌曲名稱或歌手關鍵字" }
+                    },
+                    required = new[] { "song_name" }
+                }
+            }
+        },
+        // 🌸 工具 5：通用網頁操作
+        new GlmTool
+        {
+            Type = "function",
+            Function = new GlmFunction
+            {
+                Name = "browser_action",
+                Description = "【操作目前瀏覽器分頁】當使用者要求在目前頁面點擊按鈕、填寫表單、或問「現在在哪一頁」時呼叫。",
+                Parameters = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        action = new { type = "string", description = "click / type / get_title / get_url" },
+                        selector = new { type = "string", description = "CSS 選擇器（click / type 時需要）" },
+                        text = new { type = "string", description = "要輸入的文字（type 時需要）" },
+                        submit = new { type = "boolean", description = "輸入後是否按 Enter（type 時可選）" }
+                    },
+                    required = new[] { "action" }
+                }
+            }
+        },
+        // 🌸 原本保留的工具
+        new GlmTool
+        {
+            Type = "function",
+            Function = new GlmFunction
+            {
+                Name = "execute_system_command",
+                Description = "【開啟電腦軟體或檔案專用】當使用者要開啟電腦程式、遊戲、檔案時呼叫！",
+                Parameters = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        command = new { type = "string", description = "要開啟的軟體名稱、遊戲或檔案名稱" }
+                    },
+                    required = new[] { "command" }
+                }
+            }
+        },
+        new GlmTool
+        {
+            Type = "function",
+            Function = new GlmFunction
+            {
+                Name = "capture_screen_and_see",
+                Description = "【觀看螢幕畫面專用】當使用者發出「看看我的螢幕」、「幫我看這個」時呼叫！",
+                Parameters = new
+                {
+                    type = "object",
+                    properties = new { },
+                    required = new string[] { }
+                }
+            }
+        }
+    };
         }
 
         /// <summary>
@@ -315,41 +368,106 @@ namespace SmartDesktopPet
                 using var doc = System.Text.Json.JsonDocument.Parse(argumentsJson);
                 var root = doc.RootElement;
 
-                // 🌸 1. 處理專屬 YouTube 點歌指令 (免外掛自動播第一首)
-                if (functionName == "play_youtube_music" && root.TryGetProperty("song_name", out var songElement))
+                // 🌸 1. 用「名稱」智慧打開網站（主要入口）
+                if (functionName == "browser_open_site" && root.TryGetProperty("site_name", out var siteEl))
+                {
+                    string siteName = siteEl.GetString()?.Trim() ?? "";
+                    if (!string.IsNullOrEmpty(siteName))
+                    {
+                        ShowBubbleMessage($"（叢雨幫你打開「{siteName}」…）");
+
+                        // 🌸 給 Playwright 45 秒，超過就放棄並提示
+                        var openTask = _browserService.OpenSiteByNameAsync(siteName);
+                        var completed = await Task.WhenAny(openTask, Task.Delay(TimeSpan.FromSeconds(45)));
+
+                        if (completed == openTask)
+                        {
+                            bool ok = await openTask;
+                            if (ok)
+                                ShowBubbleMessage($"（「{siteName}」已經打開囉，主人請看！）");
+                            else
+                                ShowBubbleMessage($"（唔…叢雨找不到「{siteName}」的官網，幫你搜尋了一下，請自己點進去吧。）");
+                        }
+                        else
+                        {
+                            ShowBubbleMessage($"（瀏覽器那邊好像卡住了，主人稍等一下再看看網頁吧。）");
+                        }
+                    }
+                }
+                // 🌸 2. 直接開完整網址
+                else if (functionName == "browser_open_url" && root.TryGetProperty("url", out var urlElement))
+                {
+                    string url = urlElement.GetString()?.Trim() ?? "";
+                    if (!string.IsNullOrEmpty(url))
+                    {
+                        await _browserService.NavigateAsync(url);
+                        ShowBubbleMessage($"（叢雨已幫你開啟：{url}）");
+                    }
+                }
+                // 🌸 2. 搜尋引擎查詢
+                else if (functionName == "browser_search" && root.TryGetProperty("query", out var queryElement))
+                {
+                    string query = queryElement.GetString()?.Trim() ?? "";
+                    string engine = root.TryGetProperty("engine", out var engineElement)
+                        ? engineElement.GetString() ?? "google"
+                        : "google";
+
+                    if (!string.IsNullOrEmpty(query))
+                    {
+                        await _browserService.SearchAsync(query, engine);
+                        ShowBubbleMessage($"（叢雨在 {engine} 上幫你搜尋「{query}」囉！）");
+                    }
+                }
+                // 🌸 3. YouTube 點歌
+                else if (functionName == "browser_play_youtube" && root.TryGetProperty("song_name", out var songElement))
                 {
                     string songName = songElement.GetString()?.Trim() ?? "";
                     if (!string.IsNullOrEmpty(songName))
                     {
-                        // 背景分析找出第一首歌曲的直接播放網址
-                        string targetUrl = await GetFirstYoutubeVideoUrlAsync(songName);
-
-                        bool success = OpenWithChrome(targetUrl);
-                        if (!success)
-                        {
-                            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-                            {
-                                FileName = targetUrl,
-                                UseShellExecute = true
-                            });
-                        }
+                        ShowBubbleMessage($"（叢雨正在 YouTube 找「{songName}」…）");
+                        await _browserService.PlayYoutubeAsync(songName);
+                        ShowBubbleMessage($"（找到了！開始播放「{songName}」囉，主人好好享受吧～）");
                     }
                 }
-                // 🌸 2. 處理開啟一般網址 / 搜尋
-                else if (functionName == "open_url" && root.TryGetProperty("url", out var targetUrlElement))
+                // 🌸 4. 通用網頁操作
+                else if (functionName == "browser_action" && root.TryGetProperty("action", out var actionElement))
                 {
-                    string targetUrl = targetUrlElement.GetString() ?? "";
-                    if (!string.IsNullOrEmpty(targetUrl))
+                    string action = actionElement.GetString()?.ToLowerInvariant() ?? "";
+                    string selector = root.TryGetProperty("selector", out var selEl) ? selEl.GetString() ?? "" : "";
+                    string text = root.TryGetProperty("text", out var txtEl) ? txtEl.GetString() ?? "" : "";
+                    bool submit = root.TryGetProperty("submit", out var subEl) && subEl.GetBoolean();
+
+                    switch (action)
                     {
-                        bool success = OpenWithChrome(targetUrl);
-                        if (!success)
-                        {
-                            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                        case "click":
+                            if (!string.IsNullOrEmpty(selector))
                             {
-                                FileName = targetUrl,
-                                UseShellExecute = true
-                            });
-                        }
+                                await _browserService.ClickAsync(selector);
+                                ShowBubbleMessage($"（叢雨點擊了 {selector}）");
+                            }
+                            break;
+
+                        case "type":
+                            if (!string.IsNullOrEmpty(selector))
+                            {
+                                await _browserService.TypeAsync(selector, text, submit);
+                                ShowBubbleMessage($"（叢雨在 {selector} 輸入了「{text}」{(submit ? " 並送出！" : "")}）");
+                            }
+                            break;
+
+                        case "get_title":
+                            {
+                                string title = await _browserService.GetPageTitleAsync();
+                                ShowBubbleMessage($"（目前頁面標題：{title}）");
+                                break;
+                            }
+
+                        case "get_url":
+                            {
+                                string url = await _browserService.GetPageUrlAsync();
+                                ShowBubbleMessage($"（目前頁面網址：{url}）");
+                                break;
+                            }
                     }
                 }
                 // 🌸 3. 處理開啟系統軟體 / 遊戲 / 檔案
@@ -427,49 +545,6 @@ namespace SmartDesktopPet
                 _isThinking = false;
                 SendButton.IsEnabled = true;
             }
-        }
-
-        /// <summary>
-        /// 🌸 強制使用 Chrome 開啟指定網址
-        /// </summary>
-        private bool OpenWithChrome(string url)
-        {
-            string[] possiblePaths = new string[]
-            {
-                @"C:\Program Files\Google\Chrome\Application\chrome.exe",
-                @"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), @"Google\Chrome\Application\chrome.exe")
-            };
-
-            string chromePath = string.Empty;
-            foreach (var path in possiblePaths)
-            {
-                if (File.Exists(path))
-                {
-                    chromePath = path;
-                    break;
-                }
-            }
-
-            if (!string.IsNullOrEmpty(chromePath))
-            {
-                try
-                {
-                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-                    {
-                        FileName = chromePath,
-                        Arguments = $"\"{url}\"",
-                        UseShellExecute = true
-                    });
-                    return true;
-                }
-                catch
-                {
-                    return false;
-                }
-            }
-
-            return false;
         }
 
         /// <summary>
@@ -942,22 +1017,23 @@ namespace SmartDesktopPet
             }
         }
 
-        private void MicButton_Click(object sender, RoutedEventArgs e)
+        private async void MicButton_Click(object sender, RoutedEventArgs e)
         {
-            if (_speechRecognizer == null)
+            if (_whisperService == null)
             {
-                FormsMessageBox.Show("系統未偵測到相容的語音辨識裝置或麥克風。", "語音提示");
+                FormsMessageBox.Show("語音模型未載入，請確認 ggml-small.bin 是否存在。", "語音提示");
                 return;
             }
 
-            if (!_isListening)
+            if (!_isRecording)
             {
+                // 🌸 開始錄音
                 try
                 {
-                    _speechRecognizer.RecognizeAsync(RecognizeMode.Multiple);
-                    _isListening = true;
+                    _whisperService.StartRecording();
+                    _isRecording = true;
                     MicButton.Background = System.Windows.Media.Brushes.Red;
-                    MicButton.ToolTip = "正在聆聽中... 點擊停止";
+                    MicButton.ToolTip = "正在錄音... 點擊停止";
                     BubbleText.Text = "（請開始說話，本座在聽呢...）";
                     SpeechBubble.Visibility = Visibility.Visible;
                 }
@@ -968,7 +1044,39 @@ namespace SmartDesktopPet
             }
             else
             {
-                StopListening();
+                // 🌸 停止錄音並辨識
+                _isRecording = false;
+                MicButton.IsEnabled = false; // 辨識期間禁用按鈕
+                MicButton.Background = new System.Windows.Media.BrushConverter().ConvertFrom("#CC4CAF50") as System.Windows.Media.Brush;
+                MicButton.ToolTip = "點擊開始語音輸入";
+                BubbleText.Text = "（本座正在理解你的話語…）";
+
+                try
+                {
+                    string recognizedText = await _whisperService.StopRecordingAndTranscribeAsync();
+
+                    if (!string.IsNullOrWhiteSpace(recognizedText))
+                    {
+                        InputTextBox.Text = recognizedText;
+                        InputTextBox.CaretIndex = InputTextBox.Text.Length;
+
+                        // 🌸 可選：自動發送
+                        // await SendMessageAsync();
+                    }
+                    else
+                    {
+                        BubbleText.Text = "（本座沒聽清楚，你再說一次吧。）";
+                    }
+                }
+                catch (Exception ex)
+                {
+                    BubbleText.Text = $"（辨識出錯了：{ex.Message}）";
+                }
+                finally
+                {
+                    MicButton.IsEnabled = true;
+                    _isRecording = false;
+                }
             }
         }
 
@@ -1285,9 +1393,10 @@ namespace SmartDesktopPet
 
             // 🌸 2. 一般指令關鍵字（開程式、搜尋、放歌…）
             string[] commandKeywords = {
-        "開", "開啟", "打開", "搜尋", "查", "找", "播放", "啟動", "點歌", "聽歌", "聽", "放",
-        "run", "launch", ".html", ".js", ".css", ".cs"
-    };
+                "開", "開啟", "打開", "搜尋", "查", "找", "播放", "啟動", "點歌", "聽歌", "聽", "放",
+                "官網", "網站", "網頁", "頁面", "進入", "去",
+                "run", "launch", ".html", ".js", ".css", ".cs"
+            };
             foreach (var keyword in commandKeywords)
             {
                 if (lowerText.Contains(keyword)) return true;
@@ -1354,6 +1463,17 @@ namespace SmartDesktopPet
             }
 
             return formatted;
+        }
+        protected override void OnClosed(EventArgs e)
+        {
+            try
+            {
+                _browserService.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(2));
+                _whisperService?.Dispose(); // 🌸 釋放 Whisper
+            }
+            catch { }
+
+            base.OnClosed(e);
         }
     }
 }

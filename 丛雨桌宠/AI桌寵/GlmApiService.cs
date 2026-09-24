@@ -6,6 +6,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace SmartDesktopPet
@@ -36,8 +37,9 @@ namespace SmartDesktopPet
 
         public GlmApiService()
         {
-            // 🌸 設定 HttpClient 最多等待 12 秒，避免無限期卡住
-            _httpClient.Timeout = TimeSpan.FromSeconds(20);
+            // 🌸 HttpClient 本身設一個寬鬆的天花板；
+            //    實際每次呼叫的逾時由 CancellationTokenSource 動態控制
+            _httpClient.Timeout = TimeSpan.FromSeconds(120);
             LoadConfig();
         }
 
@@ -92,7 +94,7 @@ namespace SmartDesktopPet
         }
 
         /// <summary>
-        /// 🌸 發送純文字對話與工具呼叫
+        /// 🌸 發送純文字對話與工具呼叫（帶工具時給 60 秒逾時）
         /// </summary>
         public async Task<(string ResponseText, List<GlmToolCall>? ToolCalls)> SendMessageWithToolsAsync(
             string systemPrompt,
@@ -121,7 +123,6 @@ namespace SmartDesktopPet
 
             messages.Add(new { role = "user", content = userText });
 
-            // 🌸 整合 Payload 屬性（限制 max_tokens 為 250，大幅加快生成速度）
             var payload = new Dictionary<string, object>
             {
                 { "model", TextModel },
@@ -129,18 +130,23 @@ namespace SmartDesktopPet
                 { "max_tokens", 400 }
             };
 
-            if (tools != null && tools.Count > 0)
+            bool hasTools = tools != null && tools.Count > 0;
+            if (hasTools)
             {
-                payload["tools"] = tools;
+                payload["tools"] = tools!;
                 payload["tool_choice"] = "auto";
             }
 
-            string responseJson = await PostPayloadAsync(payload);
+            // 🌸 有工具時給 60 秒（模型要讀工具定義並思考）；
+            //    沒工具時只要 20 秒純聊天就夠了
+            int timeoutSeconds = hasTools ? 60 : 20;
+
+            string responseJson = await PostPayloadAsync(payload, timeoutSeconds);
             return ParseGlmResponse(responseJson);
         }
 
         /// <summary>
-        /// 🌸 發送截圖進行視覺分析（獨立 prompt，不混入文字系統提示詞）
+        /// 🌸 發送截圖進行視覺分析（給 30 秒，因為圖片較大）
         /// </summary>
         public async Task<string> SendImageMessageAsync(string systemPrompt, string base64Image, string userText)
         {
@@ -151,7 +157,6 @@ namespace SmartDesktopPet
             }
             cleanBase64 = cleanBase64.Replace("\r", "").Replace("\n", "").Trim();
 
-            // 🌸 視覺模型只需要「視覺任務」的 prompt，不要塞整個系統提示詞
             string visionInstruction = "你是一個桌寵，請用古風傲嬌的口吻，精準描述這張螢幕截圖裡看到的軟體、畫面或內容，並進行吐槽。若畫面是程式碼或網頁，請直接說出你看到的關鍵字。";
 
             var messages = new List<object>
@@ -182,17 +187,20 @@ namespace SmartDesktopPet
             {
                 model = VisionModel,
                 messages = messages,
-                max_tokens = 2048  // 🌸 從 300 拉到 2048，給模型足夠的思考空間
+                max_tokens = 2048
             };
 
-            string responseJson = await PostPayloadAsync(payload);
+            string responseJson = await PostPayloadAsync(payload, timeoutSeconds: 30);
             var (responseText, _) = ParseGlmResponse(responseJson);
             return responseText;
         }
 
-        private async Task<string> PostPayloadAsync(object payload)
+        /// <summary>
+        /// 🌸 送出 Payload，逾時由 CancellationTokenSource 動態控制
+        /// </summary>
+        private async Task<string> PostPayloadAsync(object payload, int timeoutSeconds)
         {
-            int maxRetries = 3; // 🌸 重試上限調為 3 次，避免卡太久
+            int maxRetries = 3;
             for (int retry = 0; retry < maxRetries; retry++)
             {
                 try
@@ -200,8 +208,11 @@ namespace SmartDesktopPet
                     string jsonPayload = JsonSerializer.Serialize(payload);
                     var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
 
-                    HttpResponseMessage response = await _httpClient.PostAsync(ApiUrl, content); //
-                    string responseString = await response.Content.ReadAsStringAsync(); //
+                    // 🌸 每次呼叫用獨立的 CancellationTokenSource 控制逾時
+                    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
+
+                    HttpResponseMessage response = await _httpClient.PostAsync(ApiUrl, content, cts.Token);
+                    string responseString = await response.Content.ReadAsStringAsync();
 
                     if ((int)response.StatusCode == 429 || responseString.Contains("1305"))
                     {
@@ -214,15 +225,15 @@ namespace SmartDesktopPet
 
                     if (!response.IsSuccessStatusCode)
                     {
-                        throw new HttpRequestException($"API 請求失敗 ({response.StatusCode}): {responseString}"); //[cite: 14]
+                        throw new HttpRequestException($"API 請求失敗 ({response.StatusCode}): {responseString}");
                     }
 
-                    return responseString; //[cite: 14]
+                    return responseString;
                 }
                 catch (TaskCanceledException)
                 {
-                    // 超時直接拋出，不繼續盲目重試
-                    throw new Exception("請求逾時，伺服器反應過慢。");
+                    // 🌸 超時直接拋出（不重試，避免使用者等更久）
+                    throw new Exception($"請求逾時（超過 {timeoutSeconds} 秒），伺服器反應過慢。");
                 }
                 catch (Exception)
                 {
@@ -231,61 +242,7 @@ namespace SmartDesktopPet
                 }
             }
 
-            throw new Exception("伺服器繁忙，請稍後再試。"); //[cite: 14]
-        }
-
-        /// <summary>
-        /// 🌸 自動搜尋桌面、我的文件、下載區與開始選單中的捷徑 (.lnk) 與常見檔案（支援遞迴子資料夾）
-        /// </summary>
-        private string FindFileOrShortcutPath(string targetName)
-        {
-            string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            string downloadsFolder = Path.Combine(userProfile, "Downloads");
-
-            string[] searchFolders = new string[]
-            {
-        Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),      // 個人桌面
-        Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory),// 公用桌面
-        Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),           // 我的文件
-        downloadsFolder,                                                             // 下載資料夾
-        Environment.GetFolderPath(Environment.SpecialFolder.StartMenu)              // 開始選單
-            };
-
-            // 🌸 支援的副檔名，把 .html 也加進去了
-            string[] supportedExtensions = new string[] { "*.lnk", "*.docx", "*.xlsx", "*.pdf", "*.txt", "*.png", "*.jpg", "*.mp4", "*.zip", "*.html", "*.htm" };
-
-            foreach (var folder in searchFolders)
-            {
-                if (!Directory.Exists(folder)) continue;
-
-                foreach (var ext in supportedExtensions)
-                {
-                    try
-                    {
-                        // 🌸 改用 AllDirectories，這樣才會連同子資料夾一起翻找！
-                        var files = Directory.GetFiles(folder, ext, SearchOption.AllDirectories);
-                        foreach (var file in files)
-                        {
-                            string fileNameWithoutExt = Path.GetFileNameWithoutExtension(file);
-
-                            // 支援比對完整檔名含副檔名（例如使用者直接打 index.html）
-                            string fullFileName = Path.GetFileName(file);
-
-                            if (fileNameWithoutExt.ToLower().Contains(targetName.ToLower()) ||
-                                fullFileName.ToLower().Contains(targetName.ToLower()))
-                            {
-                                return file;
-                            }
-                        }
-                    }
-                    catch
-                    {
-                        // 略過沒有權限存取的子資料夾錯誤
-                    }
-                }
-            }
-
-            return string.Empty;
+            throw new Exception("伺服器繁忙，請稍後再試。");
         }
 
         private (string ResponseText, List<GlmToolCall>? ToolCalls) ParseGlmResponse(string json)
@@ -295,7 +252,6 @@ namespace SmartDesktopPet
                 using var doc = JsonDocument.Parse(json);
                 var root = doc.RootElement;
 
-                // 🌸 先檢查 API 是否有回傳 error，避免錯誤被吃掉
                 if (root.TryGetProperty("error", out var errorElement))
                 {
                     string errMsg = errorElement.TryGetProperty("message", out var msgEl)
