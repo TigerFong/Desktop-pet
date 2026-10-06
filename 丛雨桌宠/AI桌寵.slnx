@@ -1,3 +1,4 @@
 <Solution>
   <Project Path="AI桌寵/AI桌寵.csproj" />
+  <Project Path="PetDevTool/PetDevTool.csproj" Id="9f5f8fc6-29a4-42c4-8850-31a83f01af3f" />
 </Solution>

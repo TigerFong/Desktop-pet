@@ -25,7 +25,7 @@ namespace AI桌寵.Properties {
         
         [global::System.Configuration.UserScopedSettingAttribute()]
         [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
-        [global::System.Configuration.DefaultSettingValueAttribute("8e5f167f7d78470196ebc2950589db0a.qqNIJMqGt3AqOseF")]
+        [global::System.Configuration.DefaultSettingValueAttribute("")]
         public string ApiKey {
             get {
                 return ((string)(this["ApiKey"]));

@@ -22,6 +22,7 @@ using WpfMessageBox = System.Windows.MessageBox;
 using WpfPoint = System.Windows.Point;
 using System.Drawing; // 🌸 需要引用 System.Drawing 命名空間
 using System.Drawing.Imaging;
+using System.Security.Cryptography;
 
 namespace SmartDesktopPet
 {
@@ -41,7 +42,13 @@ namespace SmartDesktopPet
         private SpeechRecognitionEngine? _speechRecognizer;
         private bool _isListening = false;
         private int _favorability = 0;
-        private readonly string _favorabilityFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "favorability.txt");
+        // 🌸 好感度防篡改密鑰（這串要記住，開發者工具要用一樣的）
+        private const string FavorabilitySecret = "C0ngYu_2024_S3cr3t_K3y_!@#$%^&*";
+
+        // 🌸 好感度存到 AppData，避免躺在遊戲目錄
+        private readonly string _favorabilityFilePath = Path.Combine(
+    AppDomain.CurrentDomain.BaseDirectory,
+    "favorability.dat");
         private readonly string _lastCheckInFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "last_checkin.txt");
         private WhisperSpeechService? _whisperService;
         private bool _isRecording = false;
@@ -778,20 +785,79 @@ namespace SmartDesktopPet
 
         private void LoadFavorability()
         {
+            System.Diagnostics.Debug.WriteLine($"[好感度路徑] {_favorabilityFilePath}");
             try
             {
-                if (File.Exists(_favorabilityFilePath))
+                // 🌸 舊檔遷移：若 AppData 沒有檔案，但遊戲目錄有舊的 favorability.txt
+                string oldPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "favorability.txt");
+                if (!File.Exists(_favorabilityFilePath) && File.Exists(oldPath))
                 {
-                    string content = File.ReadAllText(_favorabilityFilePath);
-                    if (int.TryParse(content, out int savedScore))
+                    try
                     {
-                        _favorability = savedScore;
+                        string oldContent = File.ReadAllText(oldPath).Trim();
+                        if (int.TryParse(oldContent, out int oldValue))
+                        {
+                            _favorability = oldValue;
+                            SaveFavorability();
+                            File.Delete(oldPath);
+                            System.Diagnostics.Debug.WriteLine($"[好感度遷移] 從舊檔讀取 {oldValue} 並轉存到 AppData");
+                            return;
+                        }
                     }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[好感度遷移失敗] {ex.Message}");
+                    }
+                }
+
+                // 🌸 檔案不存在 → 預設 0
+                if (!File.Exists(_favorabilityFilePath))
+                {
+                    _favorability = 0;
+                    return;
+                }
+
+                string content = File.ReadAllText(_favorabilityFilePath, Encoding.UTF8).Trim();
+
+                // 🌸 格式必須是：數值|簽章
+                var parts = content.Split('|');
+                if (parts.Length != 2)
+                {
+                    _favorability = 0;
+                    SaveFavorability();
+                    return;
+                }
+
+                string valueStr = parts[0];
+                string savedSign = parts[1];
+                string expectedSign = ComputeHmac(valueStr);
+
+                // 🌸 簽章對不上 → 判定為篡改 → 歸零
+                if (savedSign != expectedSign)
+                {
+                    _favorability = 0;
+
+                    SetPetExpression(PetExpression.Angry);
+                    ShowBubbleMessage("哼！你竟敢偷改本座的好感度？既然如此，一切歸零，從頭來過吧！");
+
+                    SaveFavorability();
+                    return;
+                }
+
+                // 🌸 簽章正確 → 讀取數值
+                if (int.TryParse(valueStr, out int savedScore))
+                {
+                    _favorability = savedScore;
+                }
+                else
+                {
+                    _favorability = 0;
                 }
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"[好感度讀取失敗] {ex.Message}");
+                _favorability = 0;
             }
         }
 
@@ -826,12 +892,29 @@ namespace SmartDesktopPet
         {
             try
             {
-                File.WriteAllText(_favorabilityFilePath, _favorability.ToString());
+                string? dir = Path.GetDirectoryName(_favorabilityFilePath);
+                if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+                    Directory.CreateDirectory(dir);
+
+                string value = _favorability.ToString();
+                string sign = ComputeHmac(value);
+
+                File.WriteAllText(_favorabilityFilePath, $"{value}|{sign}", Encoding.UTF8);
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"[好感度儲存失敗] {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// 🌸 用密鑰計算 HMAC-SHA256 簽章
+        /// </summary>
+        private static string ComputeHmac(string value)
+        {
+            using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(FavorabilitySecret));
+            byte[] hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(value));
+            return Convert.ToBase64String(hash);
         }
 
         private void AddFavorability(int amount)
